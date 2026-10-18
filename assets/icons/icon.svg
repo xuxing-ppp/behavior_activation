@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">微光</title>
+  <desc id="desc">深绿色背景上的浅色嫩芽与暖金色光点。</desc>
+  <defs>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#397e6a"/><stop offset="1" stop-color="#205748"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#green)"/>
+  <circle cx="409" cy="277" r="76" fill="#edca81" opacity=".09"/>
+  <circle cx="409" cy="277" r="40" fill="#edca81"/>
+  <path d="M512 714V478" fill="none" stroke="#f8f5df" stroke-width="28" stroke-linecap="round"/>
+  <path d="M512 584C361 584 288 506 300 386C428 371 522 449 512 584Z" fill="#bce0cb"/>
+  <path d="M512 516C512 361 595 288 730 302C742 434 659 522 512 516Z" fill="#f8f5df"/>
+</svg>
