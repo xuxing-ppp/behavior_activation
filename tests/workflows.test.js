@@ -1,12 +1,19 @@
 // Run with: node tests/workflows.test.js
-// Exercises the real inline application logic with a minimal document adapter.
+// Loads the actual browser scripts in index.html order with a minimal document adapter.
 // Browser layout, focus trapping and native form behavior need browser verification.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const source = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const scriptTags = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
+const scripts = scriptTags.map(([, attributes, inline]) => {
+  const src = attributes.match(/\bsrc="([^"]+)"/)?.[1];
+  assert.ok(src && !inline.trim(), 'Application scripts must be external');
+  assert.match(attributes, /\bdefer\b/, 'Keep browser execution in document order');
+  const filename = path.resolve(__dirname, '..', src);
+  return { src, filename, source: fs.readFileSync(filename, 'utf8') };
+});
 const key = 'weiguang-ba-v1';
 
 function setup(seed) {
@@ -16,7 +23,7 @@ function setup(seed) {
   const node = selector => {
     if (!nodes.has(selector)) nodes.set(selector, {
       style: {}, value: '', textContent: '', innerHTML: '', dataset: {},
-      focus() {}, appendChild() {}, addEventListener(type, fn) { events[selector + ':' + type] = fn; },
+      focus() {}, scrollIntoView() {}, querySelector() { return node("child"); }, appendChild() {}, addEventListener(type, fn) { events[selector + ':' + type] = fn; },
     });
     return nodes.get(selector);
   };
@@ -29,16 +36,29 @@ function setup(seed) {
   const context = vm.createContext({
     document, structuredClone, console, Date, Math, Map, Object, JSON, Number, String,
     setTimeout: () => 1, clearTimeout() {}, confirm: () => true,
-    window: { scrollTo() {} },
+    window: { scrollX:0, scrollY:0, scrollTo() {} },
+    CSS: { escape: value => String(value).replace(/[^a-zA-Z0-9_-]/g, "_") },
     FormData: class { constructor(form) { this.values = form.values; } get(name) { return this.values[name] ?? null; } },
     localStorage: {
       getItem: name => storage.get(name) ?? null,
       setItem(name, value) { if (failWrites) throw new Error('quota'); storage.set(name, value); },
     },
   });
-  const expose = `globalThis.app={localDate,dayAdd,todayPage,insightsPage,handleClick,submit,completeActivity,changeDate,setPage,render,
-    get data(){return data},get selectedDate(){return selectedDate},get drafts(){return moodDrafts}};`;
-  vm.runInContext(source.replace(/\}\)\(\);\s*$/, expose + '})();'), context);
+  for (const { filename, source } of scripts) {
+    vm.runInContext(source, context, { filename });
+  }
+  const modules = context.window.Weiguang;
+  const state = modules.state;
+  context.app = {
+    ...modules.utils, ...modules.components, ...modules.library,
+    ...modules.pages, ...modules.dialogs, ...modules.activities, ...modules.events,
+    PRESETS: modules.config.PRESETS,
+    categories: modules.config.categories,
+    libraryState: state.libraryState,
+    get data() { return state.data; },
+    get selectedDate() { return state.selectedDate; },
+    get drafts() { return state.moodDrafts; },
+  };
   return {
     app: context.app, node, storage, events,
     fail(value) { failWrites = value; },
@@ -59,9 +79,22 @@ const seed = activities => ({ version: 1, activities, moods: {} });
 let count = 0;
 function test(name, fn) { fn(); count++; console.log('PASS', name); }
 
-test('empty home offers three editable actions; all four pages render', () => {
+test('HTML loads categorized scripts and stylesheet with a single startup entry', () => {
+  assert.ok(scripts.length > 1);
+  assert.equal(new Set(scripts.map(s => s.src)).size,scripts.length);
+  assert.equal(scripts[0].src,'src/config.js');
+  assert.equal(scripts.at(-1).src,'src/app.js');
+  assert.ok(scripts.every(s => s.src.startsWith('src/')));
+  assert.doesNotMatch(html,/<style\b/i);
+  const stylesheet=html.match(/<link rel="stylesheet" href="([^"]+)"/)?.[1];
+  assert.ok(stylesheet && fs.existsSync(path.resolve(__dirname,'..',stylesheet)));
+  const h=setup();
+  assert.ok(h.events.click && h.events.submit && h.events['#importFile:change']);
+});
+
+test('empty home offers three preset activities; all four pages render', () => {
   const h = setup();
-  assert.equal((h.app.todayPage().match(/class="starter"/g) || []).length, 3);
+  assert.equal((h.app.todayPage().match(/data-preset-card=/g) || []).length, 3);
   for (const page of ['today', 'plan', 'insights', 'guide']) h.app.setPage(page);
 });
 test('next action follows planned time; changing suggestion preserves status', () => {
@@ -170,6 +203,139 @@ test('old data, missing ratings, zero ratings and escaped titles render safely',
   assert.doesNotMatch(h.app.todayPage(),/成就 undefined/);
   assert.match(h.app.insightsPage(),/愉悦 0\/10/);
 });
+test('catalog contains six concrete experiences per category, all with first steps', () => {
+  const { app } = setup();
+  assert.equal(app.PRESETS.length,30);
+  assert.equal(new Set(app.PRESETS.map(p=>p.id)).size,30);
+  for(const category of Object.keys(app.categories)) {
+    const presets = app.PRESETS.filter(p=>p.category===category);
+    assert.equal(presets.length,6);
+    for(const preset of presets) {
+      assert.ok(preset.title && preset.step);
+      assert.ok([5,10,15].includes(preset.minutes));
+      assert.ok(Object.isFrozen(preset));
+    }
+  }
+  assert.equal(app.categories.progress[1],'学习与探索');
+});
+test('home suggestions are light, stable across renders and rotate only on request', () => {
+  const h = setup();
+  const ids = () => Array.from(h.app.homePresets(),p=>p.id);
+  assert.deepEqual(ids(),['care-drink','move-outside','joy-album']);
+  assert.ok(h.app.homePresets().every(p=>p.minutes<=5));
+  h.app.render();
+  assert.deepEqual(ids(),['care-drink','move-outside','joy-album']);
+  h.click('homePresetNext');
+  assert.notDeepEqual(ids(),['care-drink','move-outside','joy-album']);
+  assert.equal(h.app.data.activities.length,0);
+});
+test('library filters and pagination show distinct results and reset the page size', () => {
+  const h = setup();
+  const cards = () => (h.app.activityLibrary().match(/data-preset-card=/g)||[]).length;
+  assert.equal(cards(),6);
+  assert.deepEqual(Array.from(h.app.filteredPresets().slice(0,5),p=>p.category),['care','move','connect','progress','joy']);
+  for(const count of [12,18,24,30]) {h.click('presetMore');assert.equal(cards(),count);}
+  assert.equal(new Set(h.app.filteredPresets().map(p=>p.id)).size,30);
+  h.click('presetCategory',{category:'move'});
+  assert.equal(cards(),6);
+  assert.equal(h.app.libraryState.limit,6);
+  h.click('presetShort');
+  assert.equal(cards(),3);
+  assert.ok(h.app.filteredPresets().every(p=>p.minutes<=5&&p.category==='move'));
+  h.click('presetCategory',{category:'all'});
+  assert.equal(cards(),6);
+  assert.equal(h.app.filteredPresets().length,11);
+  assert.equal(h.app.data.activities.length,0);
+});
+test('one-click presets honor the selected date and reject rapid duplicate adds', () => {
+  const h = setup();
+  const tomorrow=h.app.dayAdd(today,1);
+  h.app.changeDate(tomorrow);
+  h.click('presetAdd',{presetId:'care-drink'});
+  const added=h.app.data.activities[0];
+  assert.equal(added.date,tomorrow);
+  assert.equal(added.presetId,'care-drink');
+  assert.equal(added.minutes,5);
+  assert.equal(added.step,'选一种今天想喝的饮品');
+  assert.equal(added.status,'');
+  assert.equal(added.why,'');
+  assert.equal(added.time,'');
+  h.click('presetAdd',{presetId:'care-drink'});
+  assert.equal(h.app.data.activities.length,1);
+  assert.match(h.app.activityLibrary(),/查看计划/);
+  h.app.changeDate(today);
+  h.click('presetAdd',{presetId:'care-drink'});
+  assert.equal(h.app.data.activities.length,2);
+});
+test('done and skipped presets remain identifiable even after an activity is renamed', () => {
+  for(const status of ['done','skipped']) {
+    const h=setup(seed([activity('a',{presetId:'care-drink',status,title:'My own drink'})]));
+    h.click('presetAdd',{presetId:'care-drink'});
+    assert.equal(h.app.data.activities.length,1);
+    assert.match(h.app.activityLibrary(),status==='done'?/已完成/:/已暂缓/);
+  }
+});
+test('preset undo removes only the new activity and subsequent writes invalidate undo', () => {
+  const h=setup(seed([activity('existing')]));
+  h.click('presetAdd',{presetId:'care-drink'});
+  const id=h.app.data.activities[1].id;
+  h.click('undo',{id});
+  assert.equal(h.app.data.activities.length,1);
+  assert.equal(h.app.data.activities[0].id,'existing');
+  h.click('presetAdd',{presetId:'care-drink'});
+  const newer=h.app.data.activities[1].id;
+  h.moodInput('Keep this');h.click(undefined,{rate:'mood',score:'5'});h.click('saveMood');
+  h.click('undo',{id:newer});
+  assert.equal(h.app.data.activities.length,2);
+});
+test('failed preset add leaves saved records and card state intact; retry can be undone', () => {
+  const h=setup();h.fail(true);
+  h.click('presetAdd',{presetId:'care-drink'});
+  assert.equal(h.app.data.activities.length,0);
+  assert.equal(h.storage.has(key),false);
+  assert.doesNotMatch(h.app.activityLibrary(),/data-action="presetView"/);
+  assert.match(h.node('#snack').textContent,/尚未保存/);
+  h.fail(false);h.click('presetAdd',{presetId:'care-drink'});
+  assert.equal(h.app.data.activities.length,1);
+  h.click('undo',{id:h.app.data.activities[0].id});
+  assert.equal(h.app.data.activities.length,0);
+});
+test('adjusted preset preserves identity, accepts a different date and cannot change its template', () => {
+  const h=setup();const preset=h.app.PRESETS[0];
+  h.click('presetCategory',{category:'care'});h.click('presetShort');
+  h.click('presetAdjust',{presetId:preset.id});
+  assert.match(h.node('#modalRoot').innerHTML,/name="presetId" value="care-drink"/);
+  assert.match(h.node('#modalRoot').innerHTML,/选一种今天想喝的饮品/);
+  h.click('close');
+  assert.equal(h.app.libraryState.category,'care');
+  assert.equal(h.app.libraryState.shortOnly,true);
+  assert.equal(h.app.data.activities.length,0);
+  const tomorrow=h.app.dayAdd(today,1);
+  h.form('activityForm',{title:'泡一杯茶',date:tomorrow,minutes:'8',category:'care',step:'选茶包',presetId:preset.id});
+  const a=h.app.data.activities[0];
+  assert.equal(a.date,tomorrow);assert.equal(a.presetId,preset.id);assert.equal(a.minutes,8);
+  assert.equal(preset.minutes,5);assert.equal(preset.title,'泡一杯喜欢的饮品，坐下来慢慢喝');
+  h.form('activityForm',{title:'再泡一杯',date:tomorrow,minutes:'5',category:'care',presetId:preset.id});
+  assert.equal(h.app.data.activities.length,1);
+  assert.match(h.node('#snack').textContent,/已经安排过/);
+});
+test('moving a preset to tomorrow does not overwrite an existing plan', () => {
+  const h=setup(seed([activity('a',{presetId:'care-drink'}),activity('b',{presetId:'care-drink',date:setup().app.dayAdd(today,1)})]));
+  h.form('skipForm',{id:'a',reason:''},'tomorrow');
+  assert.equal(h.app.data.activities[0].date,today);
+  assert.equal(h.app.data.activities.length,2);
+  assert.match(h.node('#snack').textContent,/明天已经安排/);
+});
+test('adding a preset retains unsaved mood input and historic progress category records', () => {
+  const h=setup(seed([activity('old',{category:'progress'})]));
+  h.moodInput('Still a draft');h.click(undefined,{rate:'mood',score:'4'});
+  h.click('presetAdd',{presetId:'joy-album'});
+  assert.equal(h.app.drafts.get(today).note,'Still a draft');
+  assert.equal(h.app.drafts.get(today).mood,4);
+  assert.equal(h.app.data.activities[0].category,'progress');
+  assert.match(h.app.todayPage(),/学习与探索/);
+});
+
 (async () => {
   const h = setup(seed([activity('existing')]));
   const oldBackup = seed([activity('imported',{status:'done'})]);
@@ -182,5 +348,22 @@ test('old data, missing ratings, zero ratings and escaped titles render safely',
   assert.equal(h.app.data.activities[0].id,'imported');
   assert.equal(h.app.data.activities[0].pleasure,undefined);
   console.log('PASS old backup import is atomic and keeps missing ratings optional');
-  console.log(`${count+1} workflow checks passed`);
+  const presets=setup();
+  const imported=seed([
+    activity('known',{presetId:'care-drink'}),
+    activity('retired',{presetId:'retired-activity'}),
+    activity('invalid',{presetId:'<script>'}),
+    activity('old',{category:'progress'})
+  ]);
+  const backupInput={files:[{size:100,text:async()=>JSON.stringify(imported)}],value:'file'};
+  await presets.events['#importFile:change']({target:backupInput});
+  const restored=JSON.parse(presets.storage.get(key));
+  assert.equal(restored.activities[0].presetId,'care-drink');
+  assert.equal(restored.activities[1].presetId,'retired-activity');
+  assert.equal(restored.activities[2].presetId,undefined);
+  assert.equal(restored.activities[3].category,'progress');
+  presets.click('presetAdd',{presetId:'care-drink'});
+  assert.equal(presets.app.data.activities.length,4);
+  console.log('PASS backup round-trip retains optional and retired preset identities');
+  console.log(`${count+2} workflow checks passed`);
 })().catch(error => { console.error(error);process.exitCode=1; });
