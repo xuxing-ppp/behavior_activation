@@ -132,6 +132,32 @@ with sync_playwright() as p:
     assert page.evaluate('window.__cloud') is None
     assert page.evaluate('window.Weiguang.state.data.activities.length') == 1
     assert page.evaluate('window.Weiguang.state.data._sync') is None
+    # Another browser/device may still retain the deleted account's old user ID.
+    page.evaluate("""() => {
+        const app = window.Weiguang;
+        const data = structuredClone(app.state.data);
+        data._sync = {owner:'deleted-user-id',enabled:true,base:{activities:[],moods:{},version:1}};
+        app.storage.save(data, {remote:true});
+    }""")
+    page.reload()
+    page.wait_for_load_state('networkidle')
+    page.locator('#syncChip').click()
+    page.get_by_role('button', name='使用 Google 登录', exact=True).click()
+    page.get_by_role('button', name='重新关联当前账号', exact=True).wait_for()
+    assert page.get_by_role('button', name='开启自动同步', exact=True).count() == 0
+    assert page.evaluate('window.__cloud') is None
+    page.screenshot(path=str(ARTIFACTS / 'sync-mobile-relink.png'), full_page=True)
+    page.set_viewport_size({'width':1280,'height':900})
+    page.screenshot(path=str(ARTIFACTS / 'sync-desktop-relink.png'), full_page=True)
+    page.get_by_role('button', name='重新关联当前账号', exact=True).click()
+    page.get_by_role('button', name='开启自动同步', exact=True).wait_for()
+    assert page.evaluate('window.Weiguang.state.data._sync.owner') == 'test-user'
+    assert page.evaluate('window.Weiguang.state.data._sync.enabled') is False
+    assert page.evaluate('window.Weiguang.state.data.activities.length') == 1
+    assert page.evaluate('window.__cloud') is None
+    assert page.evaluate('JSON.parse(localStorage.getItem("weiguang-ba-v1-before-cloud-merge")).data.activities.length') == 1
+    page.get_by_role('button', name='开启自动同步', exact=True).click()
+    page.wait_for_function('window.__cloud?.payload.activities.length === 1')
     assert not errors, errors
     browser.close()
-print('PASS real SDK GitHub/Google OAuth redirects, backup export, mobile login/enable, upload, offline save, conflict resolution, disable/re-enable, logout, account deletion confirmation/retry, and layout')
+print('PASS real SDK GitHub/Google OAuth redirects, backup export, mobile login/enable, upload, offline save, conflict resolution, disable/re-enable, logout, account deletion confirmation/retry, stale account relink, and layout')

@@ -32,6 +32,7 @@
             case 'syncDelete':
             case 'syncDeleteConfirm':
             case 'syncDetach':
+            case 'syncRelink':
             case 'syncNow':
             case 'syncLogout':
             case 'syncLocal':

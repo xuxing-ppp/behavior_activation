@@ -12,7 +12,7 @@ const plain = x => JSON.parse(JSON.stringify(x));
 function server() { return { row: null, writes: 0, reads: 0, fail: false, gate: null, race: false }; }
 async function device(remote, seed = empty(), user = 'user-a', saved) {
     const disk = saved || new Map([[KEY, JSON.stringify(seed)]]);
-    let failWrites = false, authCallback, editing = false, modal = '';
+    let failWrites = false, authCallback, editing = false, modal = '', confirmed = true;
     const nodes = new Map();
     const node = selector => {
         if (!nodes.has(selector)) nodes.set(selector, { textContent: '', outerHTML: '', value: '', style: {} });
@@ -57,7 +57,7 @@ async function device(remote, seed = empty(), user = 'user-a', saved) {
         }
     };
     const window = { location: { protocol: 'https:', origin: 'https://example.com', pathname: '/' }, navigator: { onLine: true }, supabase: { createClient: () => api }, addEventListener() {} };
-    const context = vm.createContext({ window, document, console, structuredClone, setTimeout: () => 1, clearTimeout() {}, confirm: () => true,
+    const context = vm.createContext({ window, document, console, structuredClone, setTimeout: () => 1, clearTimeout() {}, confirm: () => confirmed,
         localStorage: { getItem: k => disk.get(k) ?? null, setItem(k, v) { if (failWrites) throw new Error('quota'); disk.set(k, v); } }
     });
     for (const name of ['config', 'utils', 'storage', 'backup', 'sync']) {
@@ -70,7 +70,7 @@ async function device(remote, seed = empty(), user = 'user-a', saved) {
     app.pages.renderPreservingPosition = () => {};
     app.state.data = app.storage.load();
     await app.sync.start();
-    return { app, disk, node, api, modal: () => modal, run: () => app.sync.action('syncNow'), enable: () => app.sync.action('syncEnable'), edit: change => app.storage.commit(change), fail: value => { failWrites = value; }, editing: value => { editing = value; } };
+    return { app, disk, node, api, modal: () => modal, confirm: value => { confirmed = value; }, run: () => app.sync.action('syncNow'), enable: () => app.sync.action('syncEnable'), edit: change => app.storage.commit(change), fail: value => { failWrites = value; }, editing: value => { editing = value; } };
 }
 let count = 0;
 async function test(name, fn) { await fn(); count++; console.log('PASS', name); }
@@ -179,6 +179,58 @@ async function test(name, fn) { await fn(); count++; console.log('PASS', name); 
         const other = await device(remote, empty(), 'user-b', d.disk); const writes = remote.writes;
         await other.enable(); await other.run(); assert.equal(remote.writes, writes);
         assert.equal(other.app.state.data._sync.owner, 'user-a');
+    });
+    await test('stale association after account recreation can be explicitly rebound without uploading', async () => {
+        const oldRemote = server(), old = await device(oldRemote, records(activity('old-local')));
+        await old.enable(); await old.run();
+        const remote = server(), fresh = await device(remote, empty(), 'recreated-user', old.disk);
+        const localBefore = plain(fresh.app.state.data.activities);
+        assert.match(fresh.app.sync.panel(), /重新关联当前账号/);
+        assert.match(fresh.app.sync.panel(), /原账号已注销重建/);
+        await fresh.enable(); await fresh.run(); assert.equal(remote.writes, 0);
+        fresh.confirm(false); await fresh.app.sync.action('syncRelink');
+        assert.equal(fresh.app.state.data._sync.owner, 'user-a');
+        fresh.confirm(true); await fresh.app.sync.action('syncRelink');
+        assert.equal(fresh.app.state.data._sync.owner, 'recreated-user');
+        assert.equal(fresh.app.state.data._sync.enabled, false);
+        assert.deepEqual(plain(fresh.app.state.data._sync.base), empty());
+        assert.deepEqual(plain(fresh.app.state.data.activities), localBefore);
+        assert.deepEqual(JSON.parse(fresh.disk.get(KEY + '-before-cloud-merge')).data.activities, localBefore);
+        assert.equal(remote.reads, 0); assert.equal(remote.writes, 0);
+        const reloaded = await device(remote, empty(), 'recreated-user', fresh.disk);
+        await reloaded.run(); assert.equal(remote.writes, 0);
+        await reloaded.enable(); await reloaded.run();
+        assert.equal(remote.row.payload.activities[0].id, 'old-local');
+    });
+    await test('relink starts with an empty baseline and preserves independent records in the new cloud account', async () => {
+        const old = await device(server(), records(activity('a'))); await old.enable(); await old.run();
+        old.edit(d => d.activities = []);
+        const remote = server(); remote.row = { payload: records(activity('a', 'new account record'), activity('b')), revision: 1 };
+        const fresh = await device(remote, empty(), 'new-user', old.disk);
+        await fresh.app.sync.action('syncRelink'); await fresh.enable(); await fresh.run();
+        assert.deepEqual(remote.row.payload.activities.map(x => x.id).sort(), ['a', 'b']);
+        assert.equal(fresh.app.state.data.activities.length, 2);
+    });
+    await test('relink stops on backup failures or newer data in another tab', async () => {
+        const old = await device(server(), records(activity('a'))); await old.enable(); await old.run();
+        const fresh = await device(server(), empty(), 'new-user', old.disk);
+        fresh.fail(true); await fresh.app.sync.action('syncRelink');
+        assert.equal(fresh.app.state.data._sync.owner, 'user-a');
+        fresh.fail(false); fresh.disk.set(KEY, JSON.stringify(records(activity('newer-tab'))));
+        await fresh.app.sync.action('syncRelink');
+        assert.equal(fresh.app.state.data._sync.owner, 'user-a');
+        assert.equal(JSON.parse(fresh.disk.get(KEY)).activities[0].id, 'newer-tab');
+    });
+    await test('successful deletion followed by a new user login remains unbound until explicit sync consent', async () => {
+        const old = await device(server(), records(activity('a'))); await old.enable(); await old.run();
+        await old.app.sync.action('syncDelete'); old.node('#deleteAccountText').value = '注销';
+        await old.app.sync.action('syncDeleteConfirm');
+        const remote = server(), fresh = await device(remote, empty(), 'recreated-user', old.disk);
+        assert.equal(fresh.app.state.data._sync, undefined);
+        assert.match(fresh.app.sync.panel(), /开启自动同步/);
+        assert.doesNotMatch(fresh.app.sync.panel(), /本地记录仍关联旧账号/);
+        await fresh.run(); assert.equal(remote.writes, 0);
+        await fresh.enable(); await fresh.run(); assert.equal(remote.row.payload.activities[0].id, 'a');
     });
     await test('disable preserves login and both copies, persists after reload, and resumes merging', async () => {
         const remote = server(), d = await device(remote, records(activity('a')));

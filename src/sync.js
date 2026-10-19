@@ -56,7 +56,7 @@
         const enabled = session && owner === session.user.id && state.data?._sync?.enabled;
         const identities = [...new Set((session?.user.identities || []).map(identity => ({ github: 'GitHub', google: 'Google' })[identity.provider]).filter(Boolean))];
         const account = session ? utils.e(session.user.user_metadata?.user_name || session.user.email || session.user.user_metadata?.full_name || '已登录用户') : '';
-        return `<section id="syncPanel" class="sync-panel" aria-labelledby="syncTitle"><div class="settings-row"><div><strong id="syncTitle">跨设备同步</strong><p>使用同一个账号，通过 GitHub 或 Google 登录，在手机与电脑间同步。可随时关闭自动同步或退出登录，记录继续保存在本地。</p></div></div><p class="sync-status small" role="status" aria-live="polite">${utils.e(message)}${lastSynced && enabled ? ' · 最近同步 ' + utils.e(lastSynced) : ''}</p>${session ? `<p class="small muted">已登录：${account}${identities.length ? ' · 登录方式：' + identities.join('、') : ''}</p>` : ''}<div class="sync-actions">${!session ? '<button class="btn btn-outline" data-action="syncLogin" data-provider="github">使用 GitHub 登录</button><button class="btn btn-outline" data-action="syncLogin" data-provider="google">使用 Google 登录</button>' : `${!enabled && !mismatch && !state.data?._sync?.deletionPending ? '<button class="btn btn-primary" data-action="syncEnable">开启自动同步</button>' : ''}${enabled ? `<button class="btn btn-outline" data-action="syncNow" ${busy ? 'disabled' : ''}>立即同步</button><button class="btn btn-text" data-action="syncDisable">关闭自动同步</button>` : ''}<button class="btn btn-text" data-action="syncLogout">退出登录</button><button class="btn btn-text account-delete" data-action="syncDelete" ${deleting ? 'disabled' : ''}>注销账号</button>`}${conflict ? '<button class="btn btn-outline" data-action="syncLocal">冲突记录保留本地版本</button><button class="btn btn-outline" data-action="syncCloud">冲突记录保留云端版本</button>' : ''}</div>${conflict ? `<div class="sync-conflicts small"><p>以下记录在两台设备都发生了修改；其他记录仍会合并。请选择这些冲突记录要保留的版本。</p>${conflict.items.map(item => `<p>${utils.e(item.kind === 'mood' ? item.id + ' 的心情' : item.local?.title || item.remote?.title || '已删除的活动')}：本地${item.local ? '已修改' : '已删除'}，云端${item.remote ? '已修改' : '已删除'}</p>`).join('')}</div>` : ''}${state.data?._sync?.deletionPending ? '<p class="small muted">注销请求尚未确认，已暂停同步。可重试注销；解除本地关联仅保留本地记录，不代表云端已删除。</p><button class="btn btn-outline" data-action="syncDetach">保留记录并解除本地关联</button>' : ''}<div class="sync-actions"><button class="btn btn-text" data-action="syncInitialBackup">导出首次同步前备份</button><button class="btn btn-text" data-action="syncBackup">导出最近合并前备份</button></div><p class="small muted">同步在页面打开时运行；断网或云端暂停时，修改先保存在本地。关闭页面后无法保证后台同步。</p></section>`;
+        return `<section id="syncPanel" class="sync-panel" aria-labelledby="syncTitle"><div class="settings-row"><div><strong id="syncTitle">跨设备同步</strong><p>使用同一个账号，通过 GitHub 或 Google 登录，在手机与电脑间同步。可随时关闭自动同步或退出登录，记录继续保存在本地。</p></div></div><p class="sync-status small" role="status" aria-live="polite">${utils.e(message)}${lastSynced && enabled ? ' · 最近同步 ' + utils.e(lastSynced) : ''}</p>${session ? `<p class="small muted">已登录：${account}${identities.length ? ' · 登录方式：' + identities.join('、') : ''}</p>` : ''}<div class="sync-actions">${!session ? '<button class="btn btn-outline" data-action="syncLogin" data-provider="github">使用 GitHub 登录</button><button class="btn btn-outline" data-action="syncLogin" data-provider="google">使用 Google 登录</button>' : `${!enabled && !mismatch && !state.data?._sync?.deletionPending ? '<button class="btn btn-primary" data-action="syncEnable">开启自动同步</button>' : ''}${enabled ? `<button class="btn btn-outline" data-action="syncNow" ${busy ? 'disabled' : ''}>立即同步</button><button class="btn btn-text" data-action="syncDisable">关闭自动同步</button>` : ''}${mismatch ? '<button class="btn btn-outline" data-action="syncRelink">重新关联当前账号</button>' : ''}<button class="btn btn-text" data-action="syncLogout">退出登录</button><button class="btn btn-text account-delete" data-action="syncDelete" ${deleting ? 'disabled' : ''}>注销账号</button>`}${conflict ? '<button class="btn btn-outline" data-action="syncLocal">冲突记录保留本地版本</button><button class="btn btn-outline" data-action="syncCloud">冲突记录保留云端版本</button>' : ''}</div>${conflict ? `<div class="sync-conflicts small"><p>以下记录在两台设备都发生了修改；其他记录仍会合并。请选择这些冲突记录要保留的版本。</p>${conflict.items.map(item => `<p>${utils.e(item.kind === 'mood' ? item.id + ' 的心情' : item.local?.title || item.remote?.title || '已删除的活动')}：本地${item.local ? '已修改' : '已删除'}，云端${item.remote ? '已修改' : '已删除'}</p>`).join('')}</div>` : ''}${state.data?._sync?.deletionPending ? '<p class="small muted">注销请求尚未确认，已暂停同步。可重试注销；解除本地关联仅保留本地记录，不代表云端已删除。</p><button class="btn btn-outline" data-action="syncDetach">保留记录并解除本地关联</button>' : ''}<div class="sync-actions"><button class="btn btn-text" data-action="syncInitialBackup">导出首次同步前备份</button><button class="btn btn-text" data-action="syncBackup">导出最近合并前备份</button></div><p class="small muted">同步在页面打开时运行；断网或云端暂停时，修改先保存在本地。关闭页面后无法保证后台同步。</p></section>`;
     }
 
     function paint() {
@@ -214,7 +214,7 @@
         if (deleting) status('正在注销账号，自动同步已暂停');
         else if (meta?.deletionPending) status('注销结果尚未确认，自动同步已暂停；本地记录仍保留');
         else if (!session) status('未登录，记录保存在本地');
-        else if (meta?.owner && meta.owner !== session.user.id) status('本地记录属于另一个账号；为避免混合数据，请退出并登录原账号');
+        else if (meta?.owner && meta.owner !== session.user.id) status('本地记录仍关联旧账号，当前未同步。若原账号已注销重建，可备份后重新关联当前账号；否则请登录原账号');
         else if (!meta?.enabled) status(meta?.owner ? '自动同步已关闭，记录仅保存在本地；登录状态保留' : '已登录，尚未开启同步；本地记录不会上传');
         else status('本地记录已就绪，等待同步');
     }
@@ -309,6 +309,29 @@
             if (deleting) return;
             if (name === 'syncDelete') { openDeleteAccount(); return; }
             if (name === 'syncDeleteConfirm') { await deleteAccount(); return; }
+            if (name === 'syncRelink') {
+                const owner = state.data?._sync?.owner;
+                if (!session || !owner || owner === session.user.id) return;
+                const account = session.user.email || session.user.user_metadata?.user_name || '当前登录账号';
+                if (!confirm(`将本地记录从旧账号重新关联到「${account}」。会先自动备份，保留所有本地记录；自动同步保持关闭。再次开启同步时，本地记录会与此账号的云端记录合并。这不会确认或删除旧账号。确定重新关联吗？`)) return;
+                if (!currentDisk()) {
+                    App.components.toast('另一窗口已更新记录，请刷新后再重新关联。');
+                    return;
+                }
+                preserve(recentBackup, state.data);
+                const next = structuredClone(state.data);
+                // 新账号必须从空基线重新合并，不能沿用旧账号的删除历史。
+                next._sync = { owner: session.user.id, enabled: false, base: empty() };
+                if (!storage.save(next, { remote: true })) return;
+                generation++;
+                clearTimeout(timer);
+                conflict = null;
+                resolution = null;
+                deleteTarget = null;
+                lastSynced = '';
+                status('已重新关联当前账号，本地记录已备份；自动同步仍关闭，可手动开启');
+                return;
+            }
             if (name === 'syncDetach') {
                 if (!state.data?._sync?.deletionPending || !confirm('解除本地账号关联并保留记录；这不会删除或确认删除云端账号。确定吗？')) return;
                 const next = structuredClone(state.data);
