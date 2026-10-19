@@ -11,4 +11,5 @@
     document.addEventListener('keydown', events.handleKeydown);
     document.addEventListener('click', events.handleBackdropClick);
     pages.render();
+    App.sync.start();
 })(window.Weiguang);

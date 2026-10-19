@@ -3,15 +3,15 @@
     'use strict';
     const { components, config, pages, state, storage, utils } = App;
 
-    function exportData() {
+    function exportData(data = state.data, prefix = '微光-行为激活') {
         const payload = {
-            app: '微光-行为激活', exportedAt: new Date().toISOString(), version: 1, activities: state.data.activities, moods: state.data.moods
+            app: '微光-行为激活', exportedAt: new Date().toISOString(), version: 1, activities: data.activities, moods: data.moods
         };
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
         const u = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = u;
-        a.download = '微光-行为激活-' + utils.localDate() + '.json';
+        a.download = prefix + '-' + utils.localDate() + '.json';
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -21,6 +21,27 @@
 
     function importedPresetId(value) {
         return typeof value === 'string' && /^[a-z][a-z0-9-]{0,79}$/.test(value) ? value : undefined;
+    }
+
+    // 导入和云端下载共用清洗，防止远端异常内容破坏页面。
+    function cleanData(obj) {
+        if (!storage.valid(obj) || obj.activities.length > 30000)
+            throw new Error('Invalid record format');
+        const clean = { activities: [], moods: {}, version: 1 };
+        for (const x of obj.activities) {
+            if (!x || typeof x.title !== 'string' || typeof x.date !== 'string' || typeof x.id !== 'string' || !utils.isDate(x.date))
+                continue;
+            clean.activities.push({
+                id: x.id.slice(0, 100), presetId: importedPresetId(x.presetId), title: x.title.slice(0, 90), date: x.date, time: typeof x.time === 'string' ? x.time.slice(0, 5) : '', minutes: Math.max(1, Math.min(1440, Math.round(Number(x.minutes) || 5))), category: Object.hasOwn(config.categories, x.category) ? x.category : 'care', step: typeof x.step === 'string' ? x.step.slice(0, 130) : '', why: typeof x.why === 'string' ? x.why.slice(0, 150) : '', status: ['', 'done', 'skipped'].includes(x.status) ? x.status : '', created: Number(x.created) || Date.now(), feedbackAt: Number.isFinite(x.feedbackAt) ? x.feedbackAt : undefined, pleasure: Number.isInteger(x.pleasure) ? Math.max(0, Math.min(10, x.pleasure)) : undefined, mastery: Number.isInteger(x.mastery) ? Math.max(0, Math.min(10, x.mastery)) : undefined, note: typeof x.note === 'string' ? x.note.slice(0, 700) : '', skipReason: typeof x.skipReason === 'string' ? x.skipReason.slice(0, 150) : ''
+            });
+        }
+        for (const [s, v] of Object.entries(obj.moods)) {
+            if (utils.isDate(s) && v && Number.isInteger(v.mood) && v.mood >= 0 && v.mood <= 10)
+                clean.moods[s] = {
+                    mood: v.mood, note: typeof v.note === 'string' ? v.note.slice(0, 1200) : '', updated: Number(v.updated) || Date.now()
+                };
+        }
+        return clean;
     }
 
     const importData = async (ev) => {
@@ -38,21 +59,8 @@
                 components.toast('文件格式不符合本应用的备份格式');
                 return;
             }
-            const clean = { activities: [], moods: {}, version: 1 };
-            for (const x of obj.activities) {
-                if (!x || typeof x.title !== 'string' || typeof x.date !== 'string' || typeof x.id !== 'string' || !utils.isDate(x.date))
-                    continue;
-                clean.activities.push({
-                    id: x.id.slice(0, 100), presetId: importedPresetId(x.presetId), title: x.title.slice(0, 90), date: x.date, time: typeof x.time === 'string' ? x.time.slice(0, 5) : '', minutes: Math.max(1, Math.min(1440, Math.round(Number(x.minutes) || 5))), category: Object.hasOwn(config.categories, x.category) ? x.category : 'care', step: typeof x.step === 'string' ? x.step.slice(0, 130) : '', why: typeof x.why === 'string' ? x.why.slice(0, 150) : '', status: ['', 'done', 'skipped'].includes(x.status) ? x.status : '', created: Number(x.created) || Date.now(), feedbackAt: Number.isFinite(x.feedbackAt) ? x.feedbackAt : undefined, pleasure: Number.isInteger(x.pleasure) ? Math.max(0, Math.min(10, x.pleasure)) : undefined, mastery: Number.isInteger(x.mastery) ? Math.max(0, Math.min(10, x.mastery)) : undefined, note: typeof x.note === 'string' ? x.note.slice(0, 700) : '', skipReason: typeof x.skipReason === 'string' ? x.skipReason.slice(0, 150) : ''
-                });
-            }
-            for (const [s, v] of Object.entries(obj.moods)) {
-                if (utils.isDate(s) && v && Number.isInteger(v.mood) && v.mood >= 0 && v.mood <= 10)
-                    clean.moods[s] = {
-                        mood: v.mood, note: typeof v.note === 'string' ? v.note.slice(0, 1200) : '', updated: Number(v.updated) || Date.now()
-                    };
-            }
-            if (!confirm(`将导入 ${clean.activities.length} 条活动记录，并覆盖当前所有本地记录，确定吗？`))
+            const clean = cleanData(obj);
+            if (!confirm(`将导入 ${clean.activities.length} 条活动记录，并覆盖当前所有本地记录。${state.data._sync?.enabled ? '同步已开启，这些替换和删除也会同步到云端。' : ''}确定吗？`))
                 return;
             if (!storage.save(clean))
                 return;
@@ -66,5 +74,5 @@
         }
     };
 
-    Object.assign(App.backup, { exportData, importedPresetId, importData });
+    Object.assign(App.backup, { exportData, importedPresetId, cleanData, importData });
 })(window.Weiguang);

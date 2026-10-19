@@ -15,6 +15,8 @@
 | `dialogs.js` | 编辑、开始、缩小、反馈和暂缓弹窗，以及焦点恢复 |
 | `activities.js` | 活动查询、完成、撤销和修改后的界面更新 |
 | `backup.js` | JSON 备份导出、导入校验与恢复 |
+| `sync.js` | GitHub / Google 登录、可选自动同步、三方合并、冲突处理和同步备份 |
+| `vendor/` | 固定版本 Supabase SDK 与许可证，异步加载 |
 | `events.js` | 按钮、表单、输入和键盘事件的分发 |
 | `app.js` | 唯一启动入口：读取记录、绑定事件、首次渲染 |
 | `styles.css` | 基础样式、组件布局、活动库与响应式适配 |
@@ -38,6 +40,7 @@
 
 ```sh
 node tests/workflows.test.js
+node tests/sync.test.js
 ```
 
 测试按 `index.html` 中的实际顺序加载源码，检查启动、活动操作、灵感库、心情草稿和备份兼容。

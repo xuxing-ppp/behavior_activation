@@ -17,11 +17,22 @@
         return x && typeof x === 'object' && Array.isArray(x.activities) && x.moods && typeof x.moods === 'object' && !Array.isArray(x.moods);
     }
 
-    function save(candidate) {
+    function save(candidate, options = {}) {
         try {
+            let disk = null;
+            try { disk = JSON.parse(localStorage.getItem(config.KEY)); } catch { /* 损坏的旧记录允许重新保存。 */ }
+            if (valid(disk) && state.data && JSON.stringify(disk) !== JSON.stringify(state.data)) {
+                components.toast('另一窗口已更新记录，请刷新本页后再保存；当前输入仍保留。');
+                return false;
+            }
+            if (!options.remote && state.data?._sync)
+                candidate._sync = structuredClone(state.data._sync);
+            if (options.localClear)
+                candidate._sync = { owner: state.data?._sync?.owner || null, base: structuredClone(config.defaults), enabled: false };
             localStorage.setItem(config.KEY, JSON.stringify(candidate));
             state.data = candidate;
             state.undoRecord = null;
+            if (!options.remote) App.sync.changed?.();
             return true;
         }
         catch {

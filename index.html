@@ -24,14 +24,14 @@
       <nav class="nav" aria-label="主导航" id="deskNav"></nav>
       <div class="side-foot">
         慢慢来，也是一种前进。<br />
-        你的记录只储存在此浏览器中。<br />
+        记录保存在本地，可选开启云同步。<br />
         <span style="opacity:.7">行为激活 · 自助练习</span>
       </div>
     </aside>
     <main id="content" class="main" tabindex="-1">
       <div class="topline">
         <div class="eyebrow">BEHAVIORAL ACTIVATION</div>
-        <div class="date-chip" id="dateChip"></div>
+        <div class="topline-status"><button id="syncChip" class="sync-chip" data-page="guide" title="在指南中管理云同步">本地保存 · 可选云同步</button><div class="date-chip" id="dateChip"></div></div>
       </div>
       <div id="view"></div>
     </main>
@@ -51,6 +51,7 @@
   <script defer src="src/activities.js"></script>
   <script defer src="src/backup.js"></script>
   <script defer src="src/events.js"></script>
+  <script defer src="src/sync.js"></script>
   <script defer src="src/app.js"></script>
 </body>
 </html>

@@ -26,6 +26,16 @@
         }
         const id = btn.dataset.id;
         switch (btn.dataset.action) {
+            case 'syncLogin':
+            case 'syncEnable':
+            case 'syncNow':
+            case 'syncLogout':
+            case 'syncLocal':
+            case 'syncCloud':
+            case 'syncBackup':
+            case 'syncInitialBackup':
+                App.sync.action(btn.dataset.action, btn.dataset.provider);
+                break;
             case 'add':
                 dialogs.activityModal();
                 break;
@@ -172,7 +182,7 @@
                 break;
             case 'clear':
                 if (confirm('确定清除所有活动和心情记录吗？此操作不可撤销。') && confirm('再次确认：真的要永久清空这个浏览器中的所有记录吗？')) {
-                    if (!storage.save(structuredClone(config.defaults)))
+                    if (!storage.save(structuredClone(config.defaults), { localClear: true }))
                         return;
                     state.moodDrafts.clear();
                     state.undoRecord = null;

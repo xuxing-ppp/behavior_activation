@@ -9,7 +9,7 @@
 一个温和、轻量的行为激活练习工具。<br>
 把想做的事拆小一点，给行动后的感受留一点空间。
 
-**小步行动** · **轻量记录** · **温和回顾** · **本地保存**
+**小步行动** · **轻量记录** · **温和回顾** · **本地保存** · **可选云同步**
 
 [为什么是微光](#为什么是微光) · [你可以做什么](#你可以做什么) · [开始使用](#开始使用) · [记录与隐私](#记录与隐私)
 
@@ -79,14 +79,14 @@
 
 ## 记录与隐私
 
-**你的活动与心情记录保存在当前浏览器中，不会由微光上传到服务器。**
+**你的活动与心情记录先保存在当前浏览器中；只有主动开启云同步后，才会上传到 Supabase。**
 
-- **无需账户**：开始练习前，不需要提供个人资料。
+- **无需账户**：本地使用无需登录；可选使用 GitHub 或 Google 登录并开启云同步。
 - **按需记录**：评分与反馈可选，未填写不会被当作零分。
 - **草稿暂存**：未保存的心情草稿会在本次页面切换中保留；刷新或关闭后不保留。
 - **随时备份**：在「指南 → 数据与隐私」中导出 JSON，也可以导入备份恢复记录。导入会替换当前记录。
 
-不同设备、浏览器或网站地址之间不会自动同步。清理浏览器数据、使用无痕模式或更换访问地址，都可能使原有记录无法读取。建议定期导出备份，并妥善保管。
+未开启云同步时，不同设备、浏览器或网站地址之间不会自动同步。清理浏览器数据、使用无痕模式或更换访问地址，都可能使原有记录无法读取。建议定期导出备份，并妥善保管。
 
 ---
 
@@ -97,3 +97,54 @@
 **慢慢来，也是一种前进。**
 
 </div>
+
+
+## 可选的跨设备同步
+
+在「指南 → 数据与隐私 → 跨设备同步」中使用 GitHub 或 Google 登录，再主动开启自动同步。
+各设备使用同一账号。登录本身不会上传活动或心情记录。
+
+- 修改先写入本地；页面打开、恢复到前台、重新联网时尝试同步，打开期间每 30 秒检查云端变化。
+- 不同记录自动合并；同一记录两边都修改（包括修改与删除）时暂停同步，在指南中选择冲突版本。不会仅凭设备时间覆盖内容。
+- 首次开启、云端内容合并前自动保存本地备份，可在同步区域导出。自动备份只是当前浏览器中的首次/最近快照，仍建议定期另存 JSON。
+- 退出登录保留本地记录；换用其他账号时阻止上传原账号数据，请登录原账号。仅清除本地记录会关闭同步并保留云端记录；重新开启后会下载云端记录。
+- 导入 JSON 会替换本地记录；同步开启时，替换及删除也会同步。修改/删除记录会影响其他设备，云同步不等同于历史备份。
+- 云服务暂停或网络异常时继续本地使用，恢复后重试。关闭网页后无法保证后台同步。使用共享设备时，退出账号不会删除本地记录，应另行清理。
+- 同一浏览器多个窗口同时打开时，检测到另一个窗口更新会要求刷新，避免旧窗口覆盖新记录。
+
+维护者首次部署：
+
+1. 在 Supabase SQL Editor 执行 [`supabase/setup.sql`](supabase/setup.sql)。脚本创建表、行级读权限和具有版本校验的写入函数；可重复执行。
+2. 在 Supabase 启用 GitHub Provider，回调地址填入 GitHub OAuth App。
+3. Supabase Site URL 与 Redirect URLs 均配置为 `https://xuxing-ppp.github.io/behavior_activation/`（包含末尾 `/`）。本地测试需要额外允许 `http://localhost:8000/`。
+4. 发布网站后，用两台设备登录同一账号，开启同步，验证记录增删改及离线重连。
+
+前端公开项目地址及 publishable key 在 `src/sync.js`，不包含服务端密钥。数据库通过 `auth.uid()` 限制每个账号只能读取和更新自己的快照。
+Supabase SDK 固定为 2.118.0，保存在 `src/vendor/` 并附许可证，按需异步加载，不依赖外部 CDN。
+直接用 `file://` 打开仍支持本地使用；云登录请使用部署网址或 HTTP 开发服务。
+
+验证命令：
+
+```sh
+node tests/workflows.test.js
+node tests/sync.test.js
+# 先在另一个终端启动 python3 -m http.server 8000
+python3 tests/sync_browser.py
+```
+
+浏览器检查依赖 Python Playwright 与 Chromium；同步集成检查使用模拟传输，真实 GitHub / Google 授权和数据库权限需要完成后台配置后联调。
+
+
+### 配置 Google 登录
+
+1. 在 [Google Cloud](https://console.cloud.google.com/) 创建或选择项目，打开 Google Auth Platform，设置应用名称、支持邮箱及受众。个人 Google 账号通常选择 External；测试阶段将自己的 Google 邮箱加入 Test users。
+2. 在 Data Access 中只配置基本登录范围：`openid`、`userinfo.email`、`userinfo.profile`。
+3. 在 Clients 中创建 OAuth client ID，类型选择 **Web application**。
+4. **Authorized JavaScript origins** 填 `https://xuxing-ppp.github.io`（不包含 `/behavior_activation/` 路径）。本地测试可另加 `http://localhost:8000`。
+5. **Authorized redirect URIs** 填 `https://ppokmgorqdqzcskkoqnd.supabase.co/auth/v1/callback`。以 Supabase Google Provider 页面显示的回调地址为准。
+6. 将生成的 Client ID 和 Client Secret 填入 Supabase → Authentication → Sign In / Providers → Google，启用并保存。Secret 只存 Supabase 后台，不写入仓库。
+7. 发布微光后测试 Google 登录；如果要开放给其他用户，检查 Google Auth Platform 的 Audience 和发布状态，按控制台提示完成配置。
+
+GitHub 和 Google 共用现有同步表，无需重跑 SQL。跨设备应使用同一个 Supabase 用户账号；不同登录方式是否对应同一账号取决于 Supabase 身份关联结果，不能仅凭显示名称判断。若登录到不同账号，微光会阻止把原账号的本地记录上传过去。
+
+[Supabase 官方 Google 登录配置指南](https://supabase.com/docs/guides/auth/social-login/auth-google)

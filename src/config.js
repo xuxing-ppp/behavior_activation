@@ -12,6 +12,7 @@ window.Weiguang = {
     dialogs: {},
     activities: {},
     backup: {},
+    sync: {},
     events: {}
 };
 (function (App) {
