@@ -63,6 +63,7 @@ with sync_playwright() as p:
         page.get_by_role('button', name=f'使用 {label} 登录').click()
         page.wait_for_url('**/auth/v1/authorize**')
         assert f'provider={provider}' in page.url and 'code_challenge=' in page.url
+        assert 'prompt=select_account' in page.url
         assert 'redirect_to=http%3A%2F%2Flocalhost%3A8000%2F' in page.url
     page.close()
     # Simulated auth/transport, actual application controls, storage, rendering, and merge.
@@ -75,6 +76,18 @@ with sync_playwright() as p:
     page.locator('#syncChip').click()
     page.get_by_role('button', name='使用 Google 登录').click()
     assert page.evaluate('window.__loginOptions.provider') == 'google'
+    page.get_by_role('button', name='切换账号', exact=True).click()
+    page.get_by_role('dialog').screenshot(path=str(ARTIFACTS / 'sync-mobile-switch.png'))
+    page.set_viewport_size({'width':1280,'height':900})
+    page.get_by_role('dialog').screenshot(path=str(ARTIFACTS / 'sync-desktop-switch.png'))
+    page.set_viewport_size({'width':390,'height':844})
+    page.get_by_role('dialog').get_by_role('button', name='取消', exact=True).click()
+    assert page.get_by_role('button', name='退出登录', exact=True).count() == 1
+    page.get_by_role('button', name='切换账号', exact=True).click()
+    page.get_by_role('dialog').get_by_role('button', name='使用 GitHub 登录', exact=True).click()
+    assert page.evaluate('window.__loginOptions.provider') == 'github'
+    assert page.evaluate('window.__loginOptions.options.queryParams.prompt') == 'select_account'
+    assert page.get_by_role('dialog').count() == 0
     page.get_by_role('button', name='开启自动同步').click()
     page.wait_for_function('window.__cloud !== null')
     page.evaluate("window.Weiguang.storage.commit(d => d.activities.push({id:'one', title:'散步五分钟', date:window.Weiguang.utils.localDate(), time:'',minutes:5,category:'care',step:'穿上鞋',why:'',status:'',created:1,note:'',skipReason:''}))")
@@ -160,4 +173,4 @@ with sync_playwright() as p:
     page.wait_for_function('window.__cloud?.payload.activities.length === 1')
     assert not errors, errors
     browser.close()
-print('PASS real SDK GitHub/Google OAuth redirects, backup export, mobile login/enable, upload, offline save, conflict resolution, disable/re-enable, logout, account deletion confirmation/retry, stale account relink, and layout')
+print('PASS real SDK GitHub/Google OAuth redirects, backup export, mobile login/enable, upload, offline save, conflict resolution, disable/re-enable, logout, account deletion confirmation/retry, stale account relink, account selection/switching, and layout')

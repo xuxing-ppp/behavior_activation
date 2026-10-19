@@ -27,7 +27,7 @@ async function device(remote, seed = empty(), user = 'user-a', saved) {
         auth: {
             onAuthStateChange(fn) { authCallback = fn; },
             async getSession() { return { data: { session: user ? { access_token: 'test-access-token', user: { id: user, user_metadata: { user_name: user }, identities: [{provider:'github'}, {provider:'google'}] } } : null } }; },
-            async signOut() { authCallback('SIGNED_OUT', null); return {}; },
+            async signOut() { api.signOutCalls = (api.signOutCalls || 0) + 1; if (remote.signOutFail) return { error: new Error('signout failed') }; authCallback('SIGNED_OUT', null); return {}; },
             async signInWithOAuth(options) { api.lastLogin = options; return {}; }
         },
         functions: {
@@ -81,12 +81,37 @@ async function test(name, fn) { await fn(); count++; console.log('PASS', name); 
         assert.match(d.app.sync.panel(), /使用 Google 登录/);
         await d.app.sync.action('syncLogin', 'github');
         assert.equal(d.api.lastLogin.provider, 'github');
+        assert.equal(d.api.lastLogin.options.queryParams.prompt, 'select_account');
         await d.app.sync.action('syncLogin', 'google');
         assert.equal(d.api.lastLogin.provider, 'google');
+        assert.equal(d.api.lastLogin.options.queryParams.prompt, 'select_account');
         assert.equal(d.api.lastLogin.options.redirectTo, d.app.sync.settings.redirect);
         await d.app.sync.action('syncLogin', 'unknown');
         assert.equal(d.api.lastLogin.provider, 'google');
         assert.equal(remote.writes, 0);
+        assert.equal(d.app.state.data.activities.length, 1);
+    });
+    await test('account switch allows provider selection without signing out until selected', async () => {
+        const remote = server(), d = await device(remote, records(activity('a')));
+        await d.enable(); await d.run();
+        const before = plain(d.app.state.data), cloud = plain(remote.row);
+        await d.app.sync.action('syncSwitch');
+        assert.match(d.modal(), /data-action="syncSwitchLogin" data-provider="github"/);
+        assert.match(d.modal(), /data-action="syncSwitchLogin" data-provider="google"/);
+        assert.equal(d.api.signOutCalls, undefined);
+        await d.app.sync.action('syncSwitchLogin', 'google');
+        assert.equal(d.api.signOutCalls, 1);
+        assert.equal(d.api.lastLogin.provider, 'google');
+        assert.equal(d.api.lastLogin.options.queryParams.prompt, 'select_account');
+        assert.deepEqual(plain(d.app.state.data), before); assert.deepEqual(plain(remote.row), cloud);
+        assert.match(d.app.sync.panel(), /使用 Google 登录/);
+    });
+    await test('failed account switch signout never starts authorization for a different account', async () => {
+        const remote = server(), d = await device(remote, records(activity('a')));
+        remote.signOutFail = true;
+        await d.app.sync.action('syncSwitchLogin', 'github');
+        assert.equal(d.api.lastLogin, undefined);
+        assert.match(d.app.sync.panel(), /已登录：/);
         assert.equal(d.app.state.data.activities.length, 1);
     });
     await test('first enable backs up before associating; login alone never uploads', async () => {

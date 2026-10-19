@@ -27,6 +27,8 @@
         const id = btn.dataset.id;
         switch (btn.dataset.action) {
             case 'syncLogin':
+            case 'syncSwitch':
+            case 'syncSwitchLogin':
             case 'syncEnable':
             case 'syncDisable':
             case 'syncDelete':
