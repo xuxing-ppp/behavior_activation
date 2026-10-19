@@ -107,6 +107,7 @@
 - 修改先写入本地；页面打开、恢复到前台、重新联网时尝试同步，打开期间每 30 秒检查云端变化。
 - 不同记录自动合并；同一记录两边都修改（包括修改与删除）时暂停同步，在指南中选择冲突版本。不会仅凭设备时间覆盖内容。
 - 首次开启、云端内容合并前自动保存本地备份，可在同步区域导出。自动备份只是当前浏览器中的首次/最近快照，仍建议定期另存 JSON。
+- 可在同步区域单独关闭自动同步，保留登录、本地及云端记录；刷新后仍保持关闭。关闭期间的本地修改会在重新开启后参与合并，其他设备的同步设置不受影响。已发出的网络请求可能完成，但关闭后不会将其结果写回本地。
 - 退出登录保留本地记录；换用其他账号时阻止上传原账号数据，请登录原账号。仅清除本地记录会关闭同步并保留云端记录；重新开启后会下载云端记录。
 - 导入 JSON 会替换本地记录；同步开启时，替换及删除也会同步。修改/删除记录会影响其他设备，云同步不等同于历史备份。
 - 云服务暂停或网络异常时继续本地使用，恢复后重试。关闭网页后无法保证后台同步。使用共享设备时，退出账号不会删除本地记录，应另行清理。
@@ -128,6 +129,7 @@ Supabase SDK 固定为 2.118.0，保存在 `src/vendor/` 并附许可证，按�
 ```sh
 node tests/workflows.test.js
 node tests/sync.test.js
+node tests/delete_account.test.mjs  # 需要 Node 24+
 # 先在另一个终端启动 python3 -m http.server 8000
 python3 tests/sync_browser.py
 ```
@@ -148,3 +150,33 @@ python3 tests/sync_browser.py
 GitHub 和 Google 共用现有同步表，无需重跑 SQL。跨设备应使用同一个 Supabase 用户账号；不同登录方式是否对应同一账号取决于 Supabase 身份关联结果，不能仅凭显示名称判断。若登录到不同账号，微光会阻止把原账号的本地记录上传过去。
 
 [Supabase 官方 Google 登录配置指南](https://supabase.com/docs/guides/auth/social-login/auth-google)
+
+
+### 注销账号
+
+在登录后的同步区域点击「注销账号」，先导出需要保留的记录，再输入「注销」确认。
+此操作硬删除整个微光 Auth 用户（包括已关联的 GitHub / Google 登录身份），同步表通过外键级联删除。不会删除用户在 GitHub 或 Google 本身的账号。
+浏览器中的活动、心情和本地备份保留；成功后解除本地账号关联并退出。其他设备的本地副本不会远程擦除。
+以后重新登录可能创建新账号，只有再次主动开启同步后才会重新上传本地数据。
+
+注销失败或网络中断导致结果未知时，保留账号关联、暂停同步并允许重试。若会话已经失效，可以选择「保留记录并解除本地关联」继续本地使用；这个按钮不确认云端删除，需要在后台核实。
+
+维护者需要额外部署 Edge Function（无需修改或重跑建表 SQL）：
+
+1. Supabase → Edge Functions → Deploy a new function → Via Editor，函数名填写 **delete-account**。
+2. 将 [`supabase/functions/delete-account/index.ts`](supabase/functions/delete-account/index.ts) 全文粘贴为函数的 `index.ts`，部署。
+3. 保持函数的 **Verify JWT** 开启。函数还会向 Auth 服务实时验证用户，只允许删除当前会话对应的账号。
+4. 函数使用 Supabase 云端默认提供的 `SUPABASE_URL` 和 `SUPABASE_SERVICE_ROLE_KEY` 环境变量；不要把管理员 key 填进网页或仓库。此函数不需要第三方 npm 依赖。
+5. 发布前端。使用专门的测试账号验证注销、云端 Auth 用户及同步行删除、本地记录保留，再验证重新登录与手动开启同步。
+
+如使用已安装的 Supabase CLI，也可执行：
+
+```sh
+supabase login
+supabase link --project-ref ppokmgorqdqzcskkoqnd
+supabase functions deploy delete-account
+```
+
+同邮箱登录：Supabase 默认会自动将返回相同已验证邮箱的 OAuth 身份关联到同一用户，GitHub 和 Google 可共享记录。GitHub 隐藏邮箱或不同地址可能导致账号不同；同步区域会显示当前身份中的登录方式。注销一个已关联账号会同时移除其全部登录身份。
+
+[身份关联官方说明](https://supabase.com/docs/guides/auth/auth-identity-linking) · [服务端删除用户接口](https://supabase.com/docs/reference/javascript/auth-admin-deleteuser)

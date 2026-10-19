@@ -28,6 +28,10 @@
         switch (btn.dataset.action) {
             case 'syncLogin':
             case 'syncEnable':
+            case 'syncDisable':
+            case 'syncDelete':
+            case 'syncDeleteConfirm':
+            case 'syncDetach':
             case 'syncNow':
             case 'syncLogout':
             case 'syncLocal':

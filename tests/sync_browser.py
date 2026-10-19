@@ -9,6 +9,8 @@ MOCK = r"""
 window.__cloud = null;
 window.__offline = false;
 window.__writes = 0;
+window.__deleteFail = false;
+window.__deleteCalls = 0;
 window.supabase = {createClient: () => {
  let listener;
  return {
@@ -17,10 +19,16 @@ window.supabase = {createClient: () => {
    async getSession() { return {data:{session:null}}; },
    async signInWithOAuth(options) {
     window.__loginOptions = options;
-    listener('SIGNED_IN', {user:{id:'test-user',user_metadata:{user_name:'测试账号'}}}); return {};
+    listener('SIGNED_IN', {access_token:'test-access-token',user:{id:'test-user',user_metadata:{user_name:'测试账号'},identities:[{provider:'github'},{provider:'google'}]}}); return {};
    },
    async signOut() { listener('SIGNED_OUT', null); return {}; }
   },
+  functions: {async invoke(name, options) {
+   window.__deleteCalls++;
+   if(window.__deleteFail) return {error:Error('service unavailable')};
+   window.__cloud = null;
+   return {data:{deleted:true,userId:'test-user'}};
+  }},
   from() { return {select(){return this;},eq(){return this;},async maybeSingle(){
    if(window.__offline) throw Error('offline');
    return {data:structuredClone(window.__cloud)};
@@ -87,9 +95,43 @@ with sync_playwright() as p:
     page.locator('#syncChip').click()
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
     page.screenshot(path=str(ARTIFACTS / 'sync-mobile.png'), full_page=True)
+    page.get_by_role('button', name='关闭自动同步', exact=True).click()
+    page.get_by_role('button', name='开启自动同步', exact=True).wait_for()
+    assert page.get_by_role('button', name='退出登录', exact=True).count() == 1
+    assert page.get_by_role('button', name='立即同步', exact=True).count() == 0
+    page.evaluate("window.Weiguang.storage.commit(d => d.activities[0].title = '关闭同步后的本地修改')")
+    page.evaluate('window.Weiguang.sync.action("syncNow")')
+    assert page.evaluate('window.__cloud.payload.activities[0].title') == '离线修改'
+    assert page.evaluate('JSON.parse(localStorage.getItem("weiguang-ba-v1"))._sync.enabled') is False
+    page.screenshot(path=str(ARTIFACTS / 'sync-mobile-disabled.png'), full_page=True)
+    page.get_by_role('button', name='开启自动同步', exact=True).click()
+    page.wait_for_function('window.__cloud.payload.activities[0].title === "关闭同步后的本地修改"')
     page.get_by_role('button', name='退出登录', exact=True).click()
     page.get_by_role('button', name='使用 GitHub 登录').wait_for()
     assert page.evaluate('window.Weiguang.state.data.activities.length') == 1
+    page.get_by_role('button', name='使用 Google 登录', exact=True).click()
+    page.get_by_role('button', name='注销账号', exact=True).click()
+    page.get_by_role('heading', name='注销微光账号', exact=True).wait_for()
+    assert page.get_by_text('如果 GitHub 和 Google 已关联，两种登录身份会一起删除。', exact=False).count() == 1
+    page.get_by_role('button', name='确认注销账号', exact=True).click()
+    assert page.evaluate('window.__deleteCalls') == 0
+    page.get_by_role('button', name='取消', exact=True).click()
+    assert page.evaluate('window.__cloud !== null')
+    page.get_by_role('button', name='注销账号', exact=True).click()
+    page.locator('#deleteAccountText').fill('注销')
+    page.evaluate('window.__deleteFail = true')
+    page.get_by_role('button', name='确认注销账号', exact=True).click()
+    page.locator('#deleteAccountStatus').filter(has_text='注销未确认').wait_for()
+    assert page.evaluate('JSON.parse(localStorage.getItem("weiguang-ba-v1"))._sync.enabled') is False
+    assert page.evaluate('window.Weiguang.state.data.activities.length') == 1
+    page.screenshot(path=str(ARTIFACTS / 'sync-mobile-delete-account.png'), full_page=True)
+    page.evaluate('window.__deleteFail = false')
+    page.get_by_role('button', name='确认注销账号', exact=True).click()
+    page.get_by_role('button', name='使用 Google 登录', exact=True).wait_for()
+    assert page.get_by_role('dialog').count() == 0
+    assert page.evaluate('window.__cloud') is None
+    assert page.evaluate('window.Weiguang.state.data.activities.length') == 1
+    assert page.evaluate('window.Weiguang.state.data._sync') is None
     assert not errors, errors
     browser.close()
-print('PASS real SDK GitHub/Google OAuth redirects, backup export, mobile login/enable, upload, offline save, conflict resolution, logout, and layout')
+print('PASS real SDK GitHub/Google OAuth redirects, backup export, mobile login/enable, upload, offline save, conflict resolution, disable/re-enable, logout, account deletion confirmation/retry, and layout')

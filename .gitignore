@@ -32,3 +32,12 @@ tests/artifacts/
 
 # Personal exports — keep activity and mood records out of the repository
 微光-行为激活-*.json
+
+# Sync recovery exports and downloaded Google OAuth credentials
+微光-合并前备份-*.json
+微光-首次同步前备份-*.json
+client_secret_*.json
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/

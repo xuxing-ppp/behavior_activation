@@ -9,10 +9,10 @@ const empty = () => ({ activities: [], moods: {}, version: 1 });
 const activity = (id, title = id) => ({ id, title, date: '2026-10-19', time: '', minutes: 5, category: 'care', step: '', why: '', status: '', created: 1, note: '', skipReason: '' });
 const records = (...items) => ({ ...empty(), activities: items });
 const plain = x => JSON.parse(JSON.stringify(x));
-function server() { return { row: null, writes: 0, fail: false, gate: null, race: false }; }
+function server() { return { row: null, writes: 0, reads: 0, fail: false, gate: null, race: false }; }
 async function device(remote, seed = empty(), user = 'user-a', saved) {
     const disk = saved || new Map([[KEY, JSON.stringify(seed)]]);
-    let failWrites = false, authCallback, editing = false;
+    let failWrites = false, authCallback, editing = false, modal = '';
     const nodes = new Map();
     const node = selector => {
         if (!nodes.has(selector)) nodes.set(selector, { textContent: '', outerHTML: '', value: '', style: {} });
@@ -26,11 +26,22 @@ async function device(remote, seed = empty(), user = 'user-a', saved) {
     const api = {
         auth: {
             onAuthStateChange(fn) { authCallback = fn; },
-            async getSession() { return { data: { session: user ? { user: { id: user, user_metadata: { user_name: user } } } : null } }; },
+            async getSession() { return { data: { session: user ? { access_token: 'test-access-token', user: { id: user, user_metadata: { user_name: user }, identities: [{provider:'github'}, {provider:'google'}] } } : null } }; },
             async signOut() { authCallback('SIGNED_OUT', null); return {}; },
             async signInWithOAuth(options) { api.lastLogin = options; return {}; }
         },
+        functions: {
+            async invoke(name, options) {
+                api.deletionCalls = (api.deletionCalls || 0) + 1;
+                api.deletionOptions = options;
+                if (remote.deleteGate) await remote.deleteGate;
+                if (remote.fail) return { error: new Error('offline') };
+                remote.row = null;
+                return { data: { deleted: true, userId: user } };
+            }
+        },
         from() { return { select() { return this; }, eq() { return this; }, async maybeSingle() {
+            remote.reads++;
             if (remote.gate) await remote.gate;
             if (remote.fail) throw new Error('offline');
             return { data: remote.row ? structuredClone(remote.row) : null };
@@ -54,10 +65,12 @@ async function device(remote, seed = empty(), user = 'user-a', saved) {
     }
     const app = window.Weiguang;
     app.components.toast = () => {};
+    app.dialogs.openModal = html => { modal = html; };
+    app.dialogs.closeModal = () => { modal = ''; };
     app.pages.renderPreservingPosition = () => {};
     app.state.data = app.storage.load();
     await app.sync.start();
-    return { app, disk, node, api, run: () => app.sync.action('syncNow'), enable: () => app.sync.action('syncEnable'), edit: change => app.storage.commit(change), fail: value => { failWrites = value; }, editing: value => { editing = value; } };
+    return { app, disk, node, api, modal: () => modal, run: () => app.sync.action('syncNow'), enable: () => app.sync.action('syncEnable'), edit: change => app.storage.commit(change), fail: value => { failWrites = value; }, editing: value => { editing = value; } };
 }
 let count = 0;
 async function test(name, fn) { await fn(); count++; console.log('PASS', name); }
@@ -166,6 +179,111 @@ async function test(name, fn) { await fn(); count++; console.log('PASS', name); 
         const other = await device(remote, empty(), 'user-b', d.disk); const writes = remote.writes;
         await other.enable(); await other.run(); assert.equal(remote.writes, writes);
         assert.equal(other.app.state.data._sync.owner, 'user-a');
+    });
+    await test('disable preserves login and both copies, persists after reload, and resumes merging', async () => {
+        const remote = server(), d = await device(remote, records(activity('a')));
+        await d.enable(); await d.run();
+        const base = plain(d.app.state.data._sync.base), cloud = plain(remote.row);
+        await d.app.sync.action('syncDisable');
+        assert.equal(d.app.state.data._sync.enabled, false);
+        assert.deepEqual(plain(d.app.state.data._sync.base), base);
+        assert.deepEqual(plain(remote.row), cloud);
+        assert.match(d.app.sync.panel(), /开启自动同步/);
+        assert.match(d.app.sync.panel(), /已登录：/);
+        assert.doesNotMatch(d.app.sync.panel(), /data-action="syncNow"|data-action="syncDisable"/);
+        const reads = remote.reads, writes = remote.writes;
+        d.edit(x => x.activities.push(activity('local-only'))); await d.run();
+        assert.equal(remote.reads, reads); assert.equal(remote.writes, writes);
+        const reloaded = await device(remote, empty(), 'user-a', d.disk);
+        await reloaded.run(); assert.equal(remote.reads, reads);
+        remote.row.payload.activities.push(activity('remote-only')); remote.row.revision++;
+        await reloaded.enable(); await reloaded.run();
+        assert.deepEqual(remote.row.payload.activities.map(x => x.id).sort(), ['a', 'local-only', 'remote-only']);
+    });
+    await test('disable invalidates a pending pull before it can upload or apply cloud data', async () => {
+        const remote = server(), d = await device(remote, records(activity('a')));
+        await d.enable(); await d.run();
+        remote.row.payload.activities.push(activity('remote-only')); remote.row.revision++;
+        let release; remote.gate = new Promise(resolve => { release = resolve; });
+        const pending = d.run(); await new Promise(resolve => setImmediate(resolve));
+        await d.app.sync.action('syncDisable'); release(); await pending; remote.gate = null;
+        assert.equal(d.app.state.data._sync.enabled, false);
+        assert.equal(d.app.state.data.activities.length, 1);
+        assert.match(d.app.sync.panel(), /自动同步已关闭/);
+    });
+    await test('disable during a sent upload cannot re-enable or overwrite local state', async () => {
+        const remote = server(), d = await device(remote, records(activity('a')));
+        await d.enable(); await d.run(); d.edit(x => x.activities[0].title = 'pending');
+        let release; remote.rpcGate = new Promise(resolve => { release = resolve; });
+        const pending = d.run(); await new Promise(resolve => setImmediate(resolve));
+        await d.app.sync.action('syncDisable'); release(); await pending;
+        assert.equal(d.app.state.data._sync.enabled, false);
+        assert.equal(d.app.state.data.activities[0].title, 'pending');
+        assert.match(d.app.sync.panel(), /自动同步已关闭/);
+    });
+    await test('failed disable storage write leaves the existing enabled setting intact', async () => {
+        const remote = server(), d = await device(remote, records(activity('a')));
+        await d.enable(); d.fail(true); await d.app.sync.action('syncDisable');
+        assert.equal(d.app.state.data._sync.enabled, true);
+        assert.equal(JSON.parse(d.disk.get(KEY))._sync.enabled, true);
+    });
+    await test('account deletion requires typed confirmation and discloses linked login removal', async () => {
+        const remote = server(), d = await device(remote, records(activity('a')));
+        await d.enable(); await d.run();
+        assert.match(d.app.sync.panel(), /登录方式：GitHub、Google/);
+        await d.app.sync.action('syncDelete');
+        assert.match(d.modal(), /两种登录身份会一起删除/);
+        await d.app.sync.action('syncDeleteConfirm');
+        assert.equal(d.api.deletionCalls, undefined); assert.ok(remote.row);
+    });
+    await test('confirmed account deletion keeps local records and backups, then clears binding and signs out', async () => {
+        const remote = server(), d = await device(remote, records(activity('a')));
+        await d.enable(); await d.run(); await d.app.sync.action('syncDelete');
+        d.node('#deleteAccountText').value = '注销';
+        await d.app.sync.action('syncDeleteConfirm');
+        assert.equal(d.api.deletionCalls, 1);
+        assert.equal(d.api.deletionOptions.body.expectedUserId, 'user-a');
+        assert.equal(d.api.deletionOptions.headers.Authorization, 'Bearer test-access-token');
+        assert.equal(remote.row, null); assert.equal(d.app.state.data.activities.length, 1);
+        assert.equal(d.app.state.data._sync, undefined);
+        assert.ok(d.disk.get(KEY + '-before-sync'));
+        assert.match(d.app.sync.panel(), /使用 GitHub 登录/);
+        assert.doesNotMatch(d.app.sync.panel(), /data-action="syncDelete"/);
+    });
+    await test('unconfirmed deletion pauses sync across reload, preserves data, and allows explicit local detach', async () => {
+        const remote = server(), d = await device(remote, records(activity('a')));
+        await d.enable(); await d.run(); remote.fail = true;
+        await d.app.sync.action('syncDelete'); d.node('#deleteAccountText').value = '注销';
+        await d.app.sync.action('syncDeleteConfirm');
+        assert.ok(remote.row); assert.equal(d.app.state.data._sync.deletionPending, true);
+        assert.equal(d.app.state.data._sync.enabled, false);
+        await d.enable(); assert.equal(d.app.state.data._sync.enabled, false);
+        const reloaded = await device(remote, empty(), 'user-a', d.disk);
+        const reads = remote.reads; await reloaded.run(); assert.equal(remote.reads, reads);
+        assert.match(reloaded.app.sync.panel(), /注销结果尚未确认/);
+        await reloaded.app.sync.action('syncDetach');
+        assert.equal(reloaded.app.state.data._sync, undefined);
+        assert.equal(reloaded.app.state.data.activities.length, 1); assert.ok(remote.row);
+    });
+    await test('pending deletion rejects duplicate requests and cannot be undone by a late sync response', async () => {
+        const remote = server(), d = await device(remote, records(activity('a')));
+        await d.enable(); await d.run();
+        let releasePull; remote.gate = new Promise(resolve => { releasePull = resolve; });
+        const pendingPull = d.run(); await new Promise(resolve => setImmediate(resolve));
+        await d.app.sync.action('syncDelete'); d.node('#deleteAccountText').value = '注销';
+        let releaseDelete; remote.deleteGate = new Promise(resolve => { releaseDelete = resolve; });
+        const pendingDelete = d.app.sync.action('syncDeleteConfirm');
+        await new Promise(resolve => setImmediate(resolve));
+        await d.app.sync.action('syncDeleteConfirm'); assert.equal(d.api.deletionCalls, 1);
+        releasePull(); await pendingPull; releaseDelete(); await pendingDelete;
+        assert.equal(d.app.state.data._sync, undefined); assert.equal(remote.row, null);
+    });
+    await test('local persistence failure prevents starting account deletion', async () => {
+        const remote = server(), d = await device(remote, records(activity('a')));
+        await d.enable(); await d.run(); await d.app.sync.action('syncDelete');
+        d.node('#deleteAccountText').value = '注销'; d.fail(true);
+        await d.app.sync.action('syncDeleteConfirm');
+        assert.equal(d.api.deletionCalls, undefined); assert.ok(remote.row);
     });
     await test('local clear disables sync without deleting cloud records', async () => {
         const remote = server(), d = await device(remote, records(activity('a')));
